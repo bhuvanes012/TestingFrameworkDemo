@@ -201,3 +201,129 @@ public class OracleTools {
         return name;
     }
 }
+
+
+
+
+
+
+
+
+
+import org.springframework.ai.tool.annotation.Tool;
+import java.util.Map;
+import java.util.List;
+
+// 1. Count rows in a table
+@Tool(description = "Count rows in an Oracle table.")
+public Long getRowCount(String tableName) {
+    String table = validateIdentifier(tableName);
+
+    return jdbc.queryForObject(
+        "SELECT COUNT(*) FROM \"" + table + "\"",
+        Long.class
+    );
+}
+
+// 2. Get primary key columns
+@Tool(description = "Get primary key columns for an Oracle table.")
+public List<Map<String, Object>> getPrimaryKey(
+        String tableName) {
+
+    String table = validateIdentifier(tableName);
+
+    return jdbc.queryForList("""
+        SELECT cols.column_name, cols.position
+        FROM user_constraints cons
+        JOIN user_cons_columns cols
+          ON cons.constraint_name = cols.constraint_name
+        WHERE cons.table_name = ?
+          AND cons.constraint_type = 'P'
+        ORDER BY cols.position
+        """, table);
+}
+
+// 3. Get foreign key relationships
+@Tool(description = "Get foreign key relationships for an Oracle table.")
+public List<Map<String, Object>> getForeignKeys(
+        String tableName) {
+
+    String table = validateIdentifier(tableName);
+
+    return jdbc.queryForList("""
+        SELECT a.constraint_name,
+               a.column_name,
+               c_pk.table_name AS referenced_table,
+               b.column_name AS referenced_column
+        FROM user_constraints c
+        JOIN user_cons_columns a
+          ON c.constraint_name = a.constraint_name
+        JOIN user_constraints c_pk
+          ON c.r_constraint_name = c_pk.constraint_name
+        JOIN user_cons_columns b
+          ON c_pk.constraint_name = b.constraint_name
+         AND a.position = b.position
+        WHERE c.constraint_type = 'R'
+          AND c.table_name = ?
+        ORDER BY a.constraint_name, a.position
+        """, table);
+}
+
+// 4. Get indexes
+@Tool(description = "List indexes and indexed columns for an Oracle table.")
+public List<Map<String, Object>> getTableIndexes(
+        String tableName) {
+
+    String table = validateIdentifier(tableName);
+
+    return jdbc.queryForList("""
+        SELECT i.index_name,
+               i.uniqueness,
+               c.column_name,
+               c.column_position
+        FROM user_indexes i
+        JOIN user_ind_columns c
+          ON i.index_name = c.index_name
+        WHERE i.table_name = ?
+        ORDER BY i.index_name, c.column_position
+        """, table);
+}
+
+// 5. Find columns by datatype
+@Tool(description = "Find columns of a given datatype across Oracle tables.")
+public List<Map<String, Object>> findColumnsByType(
+        String dataType) {
+
+    if (dataType == null ||
+            !dataType.matches("[A-Za-z0-9_ ]{1,30}")) {
+        throw new IllegalArgumentException("Invalid datatype");
+    }
+
+    return jdbc.queryForList("""
+        SELECT table_name, column_name, data_type
+        FROM user_tab_columns
+        WHERE data_type = ?
+        ORDER BY table_name, column_id
+        """, dataType.toUpperCase());
+}
+
+// 6. Get recent rows from a table
+@Tool(description =
+    "Get recent rows ordered by a specified date or timestamp column.")
+public List<Map<String, Object>> getRecentRows(
+        String tableName, String dateColumn) {
+
+    String table = validateIdentifier(tableName);
+    String column = validateColumn(table, dateColumn);
+
+    return jdbc.queryForList("""
+        SELECT *
+        FROM (
+            SELECT *
+            FROM "%s"
+            ORDER BY "%s" DESC NULLS LAST
+        )
+        WHERE ROWNUM <= 20
+        """.formatted(table, column));
+}
+
